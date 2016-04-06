@@ -8,13 +8,17 @@
 #define MS2 5
 #define ENABLE 6
 
-#define MOTOR_STEP_COUNT 200 // Full steps in stepper motor
-#define ARGS_COUNT 4  // 4 args: step mode, direction, rotations count, total duration
-#define MAX_INPUT_LENGTH 100
+// Seconds it takes for Earth to rotate once. 
+// Note! Not exactly 60s * 60m * 24h (86400s) since Earth also rotates 
+// around Sun -> Rotational period is slightly shorter in reality.
+#define ROTATION_SECONDS 86164
+// Ratio of gears to motor rotation. 
+// In this case each motor rotation is slowed down by gears 10000-fold.
+#define GEAR_RATIO_TOTAL 10000
+// Full steps in stepper motor used.
+#define MOTOR_STEP_COUNT 200
 
-char input[MAX_INPUT_LENGTH]; // args + whitespace between.
-int args[ARGS_COUNT]; // 4 args: step mode, direction, rotations count, total duration
-int argc = 0, args_index = 0, input_index = 0;
+long motor_step_microseconds, motor_step_delay_microseconds;
 
 void enableControl()
 {
@@ -26,13 +30,6 @@ void disableControl()
   digitalWrite(ENABLE, HIGH);
 }
 
-void printControls()
-{
-  Serial.println();
-  Serial.println("Usage: <step count 1, 2, 4 or 8> <rotation direction 1 for clock-wise 2 for counter clock-wise> <rotations count> <total duration>");
-  Serial.println();
-}
-
 void resetPins()
 {
   digitalWrite(DIR, LOW);
@@ -42,108 +39,34 @@ void resetPins()
   disableControl();
 }
 
-void reset()
+void setStepMode()
 {
-  input[0] = '\0'; // "Reset" input, this is enough for main loop condition.
-  argc = 0;
-  args_index = 0;
-  input_index = 0;
-  
-  resetPins();
-  printControls();
+  // Use full-step.
+  // Options: full-step, half-step, quarter-step, eigth-step. See EasyDriver docs for pin configs.
+  digitalWrite(MS1, LOW);
+  digitalWrite(MS2, LOW);
 }
 
-void parseInputToArgs(char *input)
+void setRotateDirection()
 {
-  char num[3];
-  int num_index = 0;
+  // Rotate clock-wise, as the Earth rotates counter-clockwise 
+  // (from west to east), and we want to counter that rotation.
 
-  while (*input && args_index < ARGS_COUNT) {
-    char c = *input;
-
-    if (!isspace(c)) {
-      num[num_index] = c;
-      num_index++;
-    } else {
-      if (atoi(num)) {
-        args[args_index] = atoi(num);
-        args_index++;
-        Serial.println();
-      } else {
-        Serial.println("Invalid argument value, all arg values must be integers greater than 0.");
-      }
-      
-      // Clear number pointer, resets also num_index
-      for (; num_index; num_index--) {
-        num[num_index] = '\0';
-      }
-    }
-
-    input++;
-  }
+  // LOW for clock-wise, HIGH for counter-clockwise.
+  digitalWrite(DIR, LOW);
 }
 
-void setStepMode(int step_mode)
+void setStepDuration()
 {
-  switch (step_mode) {
-    case 1:
-      digitalWrite(MS1, LOW);
-      digitalWrite(MS2, LOW);
-      break;
-    case 2:
-      digitalWrite(MS1, HIGH);
-      digitalWrite(MS2, LOW);
-      break;
-    case 4:
-      digitalWrite(MS1, LOW);
-      digitalWrite(MS2, HIGH);
-      break;
-    case 8:
-      digitalWrite(MS1, HIGH);
-      digitalWrite(MS2, HIGH);
-      break;
-    default:
-      Serial.println("Invalid step mode, must be: 1, 2, 4 or 8. Using system default.");
-  }
-}
+  // Used to get seconds to microseconds ratio without floats.
+  unsigned int microseconds_ratio = 1000 * 1000 / GEAR_RATIO_TOTAL;
+   // Duration of each rotation in microseconds.
+  long motor_rotation_microseconds = ROTATION_SECONDS * microseconds_ratio;
 
-void setRotateDirection(int dir)
-{
-  switch (dir) {
-    case 1:
-      digitalWrite(DIR, LOW);
-      break;
-    case 2:
-      digitalWrite(DIR, HIGH);
-      break;
-    default:
-      Serial.println("Invalid direction, must be: 1 (clock-wise) or 2 (counter-clock-wise). Using system default.");
-  }
-}
-
-void rotate(int step_mode, int dir, int count, float duration)
-{
-  enableControl();
-  
-  setStepMode(step_mode);
-  setRotateDirection(dir);
-
-  float step_count = MOTOR_STEP_COUNT * step_mode * count; // 200 * 8 * 1 = 1600, for 1 rotation of 1/8th microsteps. 
-  float step_delay = (duration * 1000 / step_count) / 2;
-
-  Serial.print(step_count);Serial.print(" ");Serial.print(duration);Serial.print(" ");Serial.print(step_delay);
-  Serial.println("Starting rotation...");
-  
-  for (int i = 0; i < step_count; i++) {
-    digitalWrite(STEP, HIGH);
-    delayMicroseconds(step_delay);
-    digitalWrite(STEP, LOW);
-    delayMicroseconds(step_delay);
-  }
-  
-  Serial.println("Rotation finished.");
-
-  resetPins();
+  // Duration of each motor step in microseconds.
+  motor_step_microseconds = motor_rotation_microseconds / MOTOR_STEP_COUNT;
+  // Delay between step writes in microseconds - there are 2 of these in every step (HIGH, LOW).
+  motor_step_delay_microseconds = motor_step_microseconds / 2;
 }
 
 void setup()
@@ -154,34 +77,19 @@ void setup()
   pinMode(MS2, OUTPUT);
   pinMode(ENABLE, OUTPUT);
 
-  Serial.begin(9600);
-  reset();
+  resetPins();
+  enableControl();
+  
+  setStepMode();
+  setRotateDirection();
+
+  setStepDuration();
 }
 
 void loop()
 {
-  while (Serial.available()) {
-    input[input_index] = Serial.read();
-    input_index++;
-  }
-  
-  if (input[(input_index-1)] == ';') {
-    input[(input_index-1)] = ' ';
-    
-    parseInputToArgs(input);
-
-    for (int i = 0; i < ARGS_COUNT; i++) {
-      if (args[i] != 0) {
-        argc++;
-      }
-    }
-
-    if (argc < ARGS_COUNT - 1) {
-      Serial.println("Invalid arguments count, must be 4 (step mode, direction, rotation count, total duration).");
-    } else {
-      rotate(args[0], args[1], args[2], args[3]);
-    }
-    
-    reset();
-  }
+  digitalWrite(STEP, HIGH);
+  delayMicroseconds(motor_step_delay_microseconds);
+  digitalWrite(STEP, LOW);
+  delayMicroseconds(motor_step_delay_microseconds);
 }
