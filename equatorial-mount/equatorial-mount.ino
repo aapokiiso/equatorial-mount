@@ -8,18 +8,6 @@
 #define MS2 5
 #define ENABLE 6
 
-// Seconds it takes for Earth to rotate once. 
-// Note! Not exactly 60s * 60m * 24h (86400s) since Earth also rotates 
-// around Sun -> Rotational period is slightly shorter in reality.
-#define ROTATION_SECONDS 86164
-// Ratio of gears to motor rotation. 
-// In this case each motor rotation is slowed down by gears 10000-fold.
-#define GEAR_RATIO_TOTAL 10000
-// Full steps in stepper motor used.
-#define MOTOR_STEP_COUNT 200
-
-long motor_step_microseconds, motor_step_delay_microseconds;
-
 void enableControl()
 {
   digitalWrite(ENABLE, LOW);
@@ -56,19 +44,6 @@ void setRotateDirection()
   digitalWrite(DIR, LOW);
 }
 
-void setStepDuration()
-{
-  // Used to get seconds to microseconds ratio without floats.
-  unsigned int microseconds_ratio = 1000 * 1000 / GEAR_RATIO_TOTAL;
-   // Duration of each rotation in microseconds.
-  long motor_rotation_microseconds = ROTATION_SECONDS * microseconds_ratio;
-
-  // Duration of each motor step in microseconds.
-  motor_step_microseconds = motor_rotation_microseconds / MOTOR_STEP_COUNT;
-  // Delay between step writes in microseconds - there are 2 of these in every step (HIGH, LOW).
-  motor_step_delay_microseconds = motor_step_microseconds / 2;
-}
-
 void setup()
 {
   pinMode(DIR, OUTPUT);
@@ -82,14 +57,25 @@ void setup()
   
   setStepMode();
   setRotateDirection();
-
-  setStepDuration();
 }
 
+int i = 1;
 void loop()
 {
+  // (43ms * 200 + 16ms) * 10 + 4ms = 86164ms in 10 rotations = 8.6164s per rotation (avoids floating point numbers)
+  // This assumes motor to gear ratio as 1:10000 (1 motor rotation 8.6164s * 10000 = 86164s = 1 Earth rotation).
+  
+  // Each base step 43ms.
   digitalWrite(STEP, HIGH);
-  delayMicroseconds(motor_step_delay_microseconds);
+  delay(21);
   digitalWrite(STEP, LOW);
-  delayMicroseconds(motor_step_delay_microseconds);
+  delay(22);
+
+  // Every 1/8-part of rotation add 2ms of calibration (16ms / rotation).
+  // Every 5 rotations add additional 2ms of calibration (4ms / 10 rotations).
+  if (i % 25 == 0 || i % 1000 == 0) {
+    delay(2);
+  }
+  
+  i++;
 }
