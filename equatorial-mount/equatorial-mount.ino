@@ -1,12 +1,10 @@
-#include <stdlib.h>
-#include <ctype.h>
-#include <math.h>
-
 #define DIR 2
 #define STEP 3
 #define MS1 4
 #define MS2 5
 #define ENABLE 6
+
+int i;
 
 void enableControl()
 {
@@ -57,9 +55,10 @@ void setup()
   
   setStepMode();
   setRotateDirection();
+
+  i = 1;
 }
 
-int i = 1;
 void loop()
 {
   // (43ms * 200 + 16ms) * 10 + 4ms = 86164ms in 10 rotations = 8.6164s per rotation (avoids floating point numbers)
